@@ -40,6 +40,10 @@ class ApiFootballClient:
         """Bir lig-sezonun tüm maçları (istatistiksiz). Tek istek."""
         return self._get("/fixtures", {"league": league_id, "season": season})
 
+    def get_fixtures_by_date(self, day: str, timezone: str = "Europe/Istanbul") -> list[dict[str, Any]]:
+        """Bir günün TÜM liglerdeki fikstürü (tek istek). day: 'YYYY-MM-DD'."""
+        return self._get("/fixtures", {"date": day, "timezone": timezone})
+
     def get_fixtures_by_ids(self, fixture_ids: Sequence[int]) -> list[dict[str, Any]]:
         """En fazla 20 maçı istatistikleriyle birlikte tek istekte döndürür.
 

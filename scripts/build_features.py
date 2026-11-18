@@ -12,10 +12,8 @@ import sys
 
 from config.settings import DatabaseSettings
 from db.connection import DatabaseManager
-from models.dataset import MatchDataLoader
-from models.features import FeatureBuilder, FeatureConfig
-
-FEATURE_TABLE = "mac_ozellikleri"
+from models.dataset import FEATURE_TABLE, build_and_store_features
+from models.features import FeatureConfig
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,13 +28,10 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger("build_features")
 
     db = DatabaseManager(DatabaseSettings.from_env())
-    matches = MatchDataLoader(db.engine).load(args.leagues)
-    if matches.empty:
+    fs = build_and_store_features(db.engine, args.leagues, FeatureConfig(window=args.window, h2h_window=args.h2h_window))
+    if fs.frame.empty:
         log.warning("Veritabanında maç yok. Önce: python -m scripts.run_pipeline")
         return 1
-
-    fs = FeatureBuilder(FeatureConfig(window=args.window, h2h_window=args.h2h_window)).build(matches)
-    fs.frame.to_sql(FEATURE_TABLE, db.engine, if_exists="replace", index=False, chunksize=2_000, method="multi")
     log.info("%d maç (%d eğitim, %d yaklaşan), %d öznitelik → tablo: %s",
              len(fs.frame), len(fs.train), len(fs.upcoming), len(fs.feature_columns), FEATURE_TABLE)
     db.dispose()

@@ -24,6 +24,10 @@ class FootballRepository:
         self._metadata = MetaData()
         self._tables: dict[str, Table] = {}
 
+    @property
+    def engine(self) -> Engine:
+        return self._engine
+
     # --------------------------------------------------------------- generic
     def table(self, name: str) -> Table:
         if name not in self._tables:
@@ -104,6 +108,19 @@ class FootballRepository:
             df[c] = df[c].astype(float).round(4)
         with self._engine.begin() as conn:
             return self.upsert_dataframe(conn, df, "tahminler", ["mac_id"])
+
+    def get_unnotified_ids(self, match_ids: Sequence[int]) -> list[int]:
+        """Verilen maçlardan henüz Telegram'a bildirilmemiş olanlar."""
+        t = self.table("tahminler")
+        with self._engine.connect() as conn:
+            return list(conn.execute(
+                select(t.c.mac_id).where(t.c.mac_id.in_(list(match_ids) or [-1]), t.c.bildirim_gonderildi.is_(False))
+            ).scalars())
+
+    def mark_notified(self, match_ids: Sequence[int]) -> None:
+        t = self.table("tahminler")
+        with self._engine.begin() as conn:
+            conn.execute(update(t).where(t.c.mac_id.in_(list(match_ids) or [-1])).values(bildirim_gonderildi=True))
 
     def get_match_labels(self, match_ids: Sequence[int]) -> pd.DataFrame:
         """Tahmin çıktısı için takım/lig adları."""

@@ -16,8 +16,10 @@ futbol_tahmin/
 │   └── transformers.py     # JSON → pandas flatten (FixtureTransformer)
 ├── pipeline/ingestion.py   # Artımlı veri çekme orkestratörü
 ├── scripts/run_pipeline.py # CLI giriş noktası
-├── models/                 # FAZ 2-4: özellik mühendisliği + ML
-├── bot/                    # FAZ 5: Telegram botu
+├── models/                 # öznitelikler, eğitim, tahmin
+├── bot/                    # Telegram mesaj biçimi + gönderim
+├── automation/             # launchd plist, run_daily.sh, install.sh
+├── main.py                 # tek tıkla günlük iş
 ├── notebooks/              # Jupyter analizleri
 └── tests/
 ```
@@ -79,3 +81,75 @@ pipeline kaldığı yerden devam eder. Sonraki günlük çalıştırmalar ≈ 6�
 ## Tablolar
 `ligler`, `takimlar`, `maclar` (`sonuc` = H/D/A, otomatik hesaplanır), `istatistikler` (maç×takım),
 `veri_cekim_durumu`, ve analiz görünümü `v_mac_detay`.
+
+---
+
+## FAZ 4 — Telegram botu
+
+### 1) Botu oluştur (2 dakika)
+1. Telegram'da **@BotFather** → `/newbot` → isim ver → verdiği **token**'ı `.env` → `TELEGRAM_BOT_TOKEN=` satırına yapıştır.
+2. Kendi botunu Telegram'da aç ve **/start** yaz (grup kullanacaksan botu gruba ekleyip bir mesaj at).
+3. `python main.py --find-chat-id` → çıkan `TELEGRAM_CHAT_ID=...` satırını `.env`'e yaz.
+4. `python main.py --test-telegram` → "✅ bağlantı testi başarılı" mesajı gelmeli.
+
+### 2) Mesaj formatı
+```
+⚽ Günün Güvenilir Tahminleri
+📅 18.11.2026 Çarşamba
+━━━━━━━━━━━━━━━━━━━━━━
+🇹🇷 Süper Lig
+
+🕘 20:00 │ Galatasaray - Fenerbahçe
+🟢 %65 | ⚪ %20 | 🔴 %15
+🎯 Galatasaray kazanır (MS 1) ⭐⭐
+━━━━━━━━━━━━━━━━━━━━━━
+🟢 Ev sahibi  ⚪ Beraberlik  🔴 Deplasman
+📊 9 maçtan 3 güvenilir tahmin (eşik %55)
+```
+- Sadece en yüksek olasılığı **≥ %55** olan tahminler listelenir (`.env` → `CONFIDENCE_THRESHOLD`).
+- ⭐ %55+, ⭐⭐ %62+, ⭐⭐⭐ %70+. Uzun listeler 4096 karakter sınırına göre otomatik bölünür.
+- Aynı gün iş iki kez çalışsa bile aynı maçlar için ikinci mesaj **atılmaz** (`tahminler.bildirim_gonderildi`).
+- Hata olursa Telegram'a ⚠️ uyarı gelir.
+
+## FAZ 5 — Otomasyon
+
+### main.py — tek tıkla her şey
+```bash
+python main.py                 # veri → günün fikstürü → öznitelik → model (7 günden eskiyse yeniden eğit) → tahmin → Telegram
+python main.py --dry-run       # Telegram'a göndermeden mesajı ekrana bas
+python main.py --skip-ingest   # API'ye gitmeden mevcut veriyle
+python main.py --retrain       # modeli zorla yeniden eğit
+```
+Bir adım çökerse (ör. API kotası bitti) kalan adımlar mevcut veriyle devam eder. Log: `logs/daily.log` (5 MB'ta döner).
+
+### Her sabah 09:00 — launchd (önerilen)
+```bash
+bash automation/install.sh            # kur
+bash automation/install.sh status     # durum + son loglar
+bash automation/install.sh run        # şimdi bir kez tetikle (test)
+bash automation/install.sh uninstall  # kaldır
+```
+Ne yapar: `automation/com.futboltahmin.daily.plist` dosyasını `~/Library/LaunchAgents/` altına kopyalar ve
+`launchctl bootstrap` ile yükler. Ajan her gün 09:00'da `automation/run_daily.sh` çalıştırır; o da:
+1. Aynı anda iki kopya çalışmasın diye kilit alır,
+2. İnternet ve PostgreSQL hazır olana kadar bekler (uykudan uyanış sonrası),
+3. `caffeinate -i` ile iş bitene kadar Mac'in uykuya geçmesini engeller,
+4. `.venv` Python'u ile `main.py`'yi çalıştırır.
+
+**Neden cron değil launchd?** Mac 09:00'da uykudaysa **cron o günü atlar**; launchd ise Mac uyanınca kaçırılan işi bir kez
+çalıştırır. Mac tamamen **kapalıysa** ikisi de çalışmaz.
+
+> İsteğe bağlı: Mac'i 08:58'de otomatik uyandırmak için (şifre ister):
+> `sudo pmset repeat wakeorpoweron MTWRFSU 08:58:00`  — iptal: `sudo pmset repeat cancel`
+
+### Alternatif: crontab
+```bash
+crontab -e
+```
+şu satırı ekle (dakika saat gün ay haftanın-günü):
+```
+0 9 * * * /bin/bash /Users/emreonder/futbol_tahmin/automation/run_daily.sh >> /Users/emreonder/futbol_tahmin/logs/cron.log 2>&1
+```
+`crontab -l` ile kontrol et. Not: cron, Mac uykudaysa çalışmaz; ayrıca macOS bazı klasörler için cron'a
+"Tam Disk Erişimi" isteyebilir (Sistem Ayarları → Gizlilik ve Güvenlik → Tam Disk Erişimi → `/usr/sbin/cron`).
+Proje ana klasörde (Desktop/Documents dışında) olduğu için genelde gerekmez.

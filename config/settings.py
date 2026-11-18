@@ -95,6 +95,33 @@ class PipelineSettings:
 
 
 @dataclass(frozen=True)
+class TelegramSettings:
+    token: str
+    chat_id: str
+
+    @classmethod
+    def from_env(cls) -> "TelegramSettings":
+        return cls(token=_env("TELEGRAM_BOT_TOKEN"), chat_id=_env("TELEGRAM_CHAT_ID"))
+
+
+@dataclass(frozen=True)
+class DailyJobSettings:
+    timezone: str = "Europe/Istanbul"
+    confidence_threshold: float = 0.55   # Mesaja girecek minimum en yüksek olasılık
+    retrain_days: int = 7                # Model bundan eskiyse yeniden eğitilir
+    ingest_max_requests: int = 60        # Günlük iş için API istek tavanı
+
+    @classmethod
+    def from_env(cls) -> "DailyJobSettings":
+        return cls(
+            timezone=os.getenv("TIMEZONE", cls.timezone),
+            confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", cls.confidence_threshold)),
+            retrain_days=int(os.getenv("RETRAIN_DAYS", cls.retrain_days)),
+            ingest_max_requests=int(os.getenv("DAILY_MAX_REQUESTS", cls.ingest_max_requests)),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     db: DatabaseSettings
     api: ApiSettings

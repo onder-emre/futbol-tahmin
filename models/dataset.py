@@ -5,6 +5,9 @@ import pandas as pd
 from sqlalchemy import Engine, bindparam, text
 
 from api.transformers import FINISHED_STATUSES
+from models.features import FeatureBuilder, FeatureConfig, FeatureSet
+
+FEATURE_TABLE = "mac_ozellikleri"
 
 UPCOMING_STATUSES = ("NS", "TBD")
 
@@ -44,3 +47,15 @@ class MatchDataLoader:
                                           "ev_sahibi_id", "deplasman_id"])
         df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce").astype("float64")
         return df
+
+
+def build_and_store_features(
+    engine: Engine, league_ids: list[int] | None = None, config: FeatureConfig | None = None,
+) -> FeatureSet:
+    """Ham veriden öznitelikleri hesaplar ve `mac_ozellikleri` tablosunu yeniler."""
+    matches = MatchDataLoader(engine).load(league_ids)
+    if matches.empty:
+        return FeatureSet(frame=pd.DataFrame(columns=["mac_id", "tarih", "sonuc", "lig_id"]))
+    fs = FeatureBuilder(config).build(matches)
+    fs.frame.to_sql(FEATURE_TABLE, engine, if_exists="replace", index=False, chunksize=2_000, method="multi")
+    return fs
