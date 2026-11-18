@@ -59,6 +59,10 @@ class TrainingResult:
     feature_importance: pd.Series
     train_period: tuple[str, str]
     test_period: tuple[str, str]
+    # Ek pazarlar (maç sonucuna ek): KG = karşılıklı gol, ÜA = üst/alt 2.5 gol
+    kg_model: object = None
+    ua_model: object = None
+    extra_metrics: dict = field(default_factory=dict)
     trained_at: str = field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"))
 
     def report(self) -> str:
@@ -82,6 +86,12 @@ class TrainingResult:
             "En önemli 10 öznitelik:",
             self.feature_importance.head(10).round(4).to_string(),
         ]
+        if self.extra_metrics:
+            lines += ["", "Ek pazarlar (holdout doğruluğu):"]
+            if "kg_accuracy" in self.extra_metrics:
+                lines.append(f"  KG (karşılıklı gol var/yok) : {self.extra_metrics['kg_accuracy']:.3f}")
+            if "ua_accuracy" in self.extra_metrics:
+                lines.append(f"  Üst/Alt 2.5 gol             : {self.extra_metrics['ua_accuracy']:.3f}")
         return "\n".join(lines)
 
 
@@ -114,14 +124,26 @@ class ModelTrainer:
         self.config = config or TrainConfig()
 
     # ------------------------------------------------------------ data prep
-    def prepare(self, fs: FeatureSet) -> tuple[pd.DataFrame, np.ndarray, pd.Series]:
+    def _filtered(self, fs: FeatureSet) -> pd.DataFrame:
+        """Yeterli geçmişi olan eğitim maçları, zaman sırasıyla (prepare ve ek pazarlar aynı satırları kullanır)."""
         df = fs.train.sort_values(["tarih", "mac_id"])
         enough = (df["ev_genel_mac_sayisi"] >= self.config.min_history) & \
                  (df["dep_genel_mac_sayisi"] >= self.config.min_history)
-        df = df[enough]
+        return df[enough].reset_index(drop=True)
+
+    def prepare(self, fs: FeatureSet) -> tuple[pd.DataFrame, np.ndarray, pd.Series]:
+        df = self._filtered(fs)
         X = df[fs.feature_columns].astype("float64").reset_index(drop=True)
         y = df["sonuc"].map(RESULT_TO_CLASS).to_numpy(dtype=int)
         return X, y, df["tarih"].reset_index(drop=True)
+
+    def _fit_binary(self, X: pd.DataFrame, y: np.ndarray):
+        """KG / Üst-Alt için ikili Random Forest (eksik değerleri doldurarak)."""
+        model = make_pipeline(
+            SimpleImputer(strategy="median", keep_empty_features=True),
+            RandomForestClassifier(**self.config.rf_params, n_jobs=-1, random_state=self.config.random_state),
+        )
+        return model.fit(X, y)
 
     def time_split(self, dates: pd.Series) -> tuple[np.ndarray, np.ndarray]:
         """En yeni maçlar test. Kesim noktası bir gün başına çekilir → aynı gün iki tarafa bölünmez."""
@@ -181,6 +203,25 @@ class ModelTrainer:
         # 2) Canlı tahmin için son modeli TÜM geçmiş veriyle eğit (en güncel form bilgisi dahil)
         final_model = self._fit(algorithm, X, y)
 
+        # 3) Ek pazarlar: KG (karşılıklı gol) ve Üst/Alt 2.5 gol — aynı öznitelikler, ikili modeller
+        df = self._filtered(fs)
+        goller = df["ev_gol"].to_numpy() + df["dep_gol"].to_numpy()
+        kg = ((df["ev_gol"] > 0) & (df["dep_gol"] > 0)).astype(int).to_numpy()
+        ua = (goller > 2.5).astype(int)
+        extra: dict = {}
+        kg_model = ua_model = None
+        try:
+            # holdout doğruluğu (sadece raporlama; model eğitim döneminden öğrenir)
+            kg_probe = self._fit_binary(X_tr, kg[tr])
+            extra["kg_accuracy"] = float(accuracy_score(kg[te], kg_probe.predict(X.iloc[te])))
+            ua_probe = self._fit_binary(X_tr, ua[tr])
+            extra["ua_accuracy"] = float(accuracy_score(ua[te], ua_probe.predict(X.iloc[te])))
+            # canlı için tüm veriyle yeniden eğit
+            kg_model = self._fit_binary(X, kg)
+            ua_model = self._fit_binary(X, ua)
+        except Exception:  # ek pazarlar başarısız olsa bile ana model (MS) teslim edilir
+            logger.exception("Ek pazar (KG/ÜA) modelleri eğitilemedi, yalnızca MS döner")
+
         return TrainingResult(
             model=final_model,
             algorithm=algorithm,
@@ -190,6 +231,7 @@ class ModelTrainer:
             feature_importance=self._importance(final_model, list(X.columns)),
             train_period=(str(dates.iloc[tr[0]].date()), str(dates.iloc[tr[-1]].date())),
             test_period=(str(dates.iloc[te[0]].date()), str(dates.iloc[te[-1]].date())),
+            kg_model=kg_model, ua_model=ua_model, extra_metrics=extra,
         )
 
     @staticmethod

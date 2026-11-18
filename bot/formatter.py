@@ -81,11 +81,27 @@ class MessageFormatter:
             "2": f"{r['deplasman']} kazanır",
         }[r["tahmin"]]
         market = f"(MS {r['tahmin']})"
-        return (
-            f"🕘 {esc(kickoff)} │ {bold(r['ev_sahibi'])} {esc('-')} {bold(r['deplasman'])}\n"
-            f"🟢 %{p1} \\| ⚪ %{px} \\| 🔴 %{p2}\n"
-            f"🎯 {bold(verdict)} {esc(market)} {confidence_stars(r['guven'])}"
-        )
+        lines = [
+            f"🕘 {esc(kickoff)} │ {bold(r['ev_sahibi'])} {esc('-')} {bold(r['deplasman'])}",
+            f"🟢 %{p1} \\| ⚪ %{px} \\| 🔴 %{p2}",
+            f"🎯 {bold(verdict)} {esc(market)} {confidence_stars(r['guven'])}",
+        ]
+        extra = self._extra_markets(r)
+        if extra:
+            lines.append(extra)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extra_markets(r: pd.Series) -> str:
+        """KG (karşılıklı gol) ve Üst/Alt 2.5 gol satırı — bu kolonlar varsa."""
+        parts = []
+        if "kg_tahmin" in r and pd.notna(r.get("kg_olasilik")):
+            p = r["kg_olasilik"] if r["kg_tahmin"] == "Var" else 1 - r["kg_olasilik"]
+            parts.append(f"KG {esc(r['kg_tahmin'])} %{round(p * 100)}")
+        if "ua_tahmin" in r and pd.notna(r.get("ua_olasilik")):
+            p = r["ua_olasilik"] if r["ua_tahmin"] == "Üst" else 1 - r["ua_olasilik"]
+            parts.append(f"{esc(str(r['ua_tahmin']) + ' 2.5 gol')} %{round(p * 100)}")
+        return ("➕ " + " · ".join(parts)) if parts else ""
 
     def _footer(self, total: int, shown: int, model_version: str) -> str:
         return (

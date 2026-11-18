@@ -22,11 +22,15 @@ class ModelArtifact:
     feature_columns: list[str]
     metrics: dict
     version: str
+    kg_model: object = None   # karşılıklı gol (var/yok) ikili modeli
+    ua_model: object = None   # üst/alt 2.5 gol ikili modeli
 
     @classmethod
     def from_training(cls, result: TrainingResult) -> "ModelArtifact":
         return cls(result.model, result.algorithm, result.feature_columns, result.metrics,
-                   version=f"{result.algorithm}_{result.trained_at}")
+                   version=f"{result.algorithm}_{result.trained_at}",
+                   kg_model=getattr(result, "kg_model", None),
+                   ua_model=getattr(result, "ua_model", None))
 
 
 class ModelStore:
@@ -81,4 +85,16 @@ class MatchPredictor:
         out["tahmin"] = np.array(CLASS_LABELS)[proba.argmax(axis=1)]
         out["guven"] = proba.max(axis=1)
         out["model_versiyonu"] = self.artifact.version
+
+        # Ek pazarlar (varsa): KG = karşılıklı gol, ÜA = üst/alt 2.5 gol
+        kg_model = getattr(self.artifact, "kg_model", None)
+        ua_model = getattr(self.artifact, "ua_model", None)
+        if kg_model is not None:
+            p_var = kg_model.predict_proba(X)[:, 1]
+            out["kg_olasilik"] = p_var
+            out["kg_tahmin"] = np.where(p_var >= 0.5, "Var", "Yok")
+        if ua_model is not None:
+            p_ust = ua_model.predict_proba(X)[:, 1]
+            out["ua_olasilik"] = p_ust
+            out["ua_tahmin"] = np.where(p_ust >= 0.5, "Üst", "Alt")
         return out
