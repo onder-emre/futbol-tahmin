@@ -15,7 +15,6 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from api.client import ApiFootballClient, QuotaExhaustedError
-from api.transformers import FixtureTransformer
 from bot.formatter import MessageFormatter
 from bot.notifier import TelegramNotifier
 from config.settings import DailyJobSettings, Settings
@@ -24,7 +23,6 @@ from models.dataset import build_and_store_features
 from models.features import FeatureSet
 from models.predictor import MatchPredictor, ModelArtifact, ModelStore
 from models.trainer import ModelTrainer, TrainConfig
-from pipeline.ingestion import IngestionPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +52,7 @@ class DailyJob:
         settings: Settings,
         daily: DailyJobSettings,
         repository: FootballRepository,
-        client: ApiFootballClient,
+        client: ApiFootballClient | None,
         notifier: TelegramNotifier | None,
         model_store: ModelStore | None = None,
         dry_run: bool = False,
@@ -72,7 +70,8 @@ class DailyJob:
     def run(self, skip_ingest: bool = False, force_retrain: bool = False, today: pd.Timestamp | None = None) -> DailyReport:
         report = DailyReport()
         today = (today or pd.Timestamp.now(tz=self.tz)).normalize()
-        self.client.request_budget = self.daily.ingest_max_requests
+        if self.client is not None:
+            self.client.request_budget = self.daily.ingest_max_requests
 
         self._step(report, "veri", lambda: "atlandı" if skip_ingest else self._ingest())
         self._step(report, "fikstür", lambda: "atlandı" if skip_ingest else self._fetch_todays_fixtures(today))
@@ -106,18 +105,35 @@ class DailyJob:
 
     # ---------------------------------------------------------------- steps
     def _ingest(self) -> str:
-        r = IngestionPipeline(self.client, self.repo, self.settings.pipeline).run()
-        return f"{r.matches_written} maç, {r.stats_written} istatistik, {r.api_requests} istek"
+        """Güncel sezonu ücretsiz football-data.co.uk aynasından yeniler (anahtar/kota yok)."""
+        from config.settings import current_season
+        from pipeline.fdcsv import LIG_ID_TO_DIV, FootballDataCsvSource, write_frames
+
+        divs = [LIG_ID_TO_DIV[lid] for lid in self.settings.pipeline.league_ids if lid in LIG_ID_TO_DIV]
+        season = current_season()
+        frames = FootballDataCsvSource().build(divs, [season])
+        if frames.maclar.empty:
+            return "aynadan güncel maç gelmedi (sezon henüz başlamamış olabilir)"
+        n = write_frames(self.repo, self.repo.engine, frames, truncate=False)
+        return f"ayna: {n['mac']} maç, {n['istatistik']} istatistik ({season}/{season + 1} sezonu)"
 
     def _fetch_todays_fixtures(self, today: pd.Timestamp) -> str:
-        """Günün fikstürü (tek istek), sadece takip edilen ligler."""
-        fixtures = self.client.get_fixtures_by_date(today.strftime("%Y-%m-%d"), self.daily.timezone)
-        ours = [f for f in fixtures if f["league"]["id"] in self.settings.pipeline.league_ids]
-        frames = FixtureTransformer().transform(ours)
-        if frames.is_empty:
-            return "bugün takip edilen liglerde maç yok"
-        self.repo.save_fixture_frames(frames)
-        return f"{len(frames.matches)} maç güncellendi"
+        """Gelecek maçları TheSportsDB'den çeker (ücretsiz), DB takımlarına eşler, durum='NS' yazar."""
+        from sqlalchemy import text
+
+        from pipeline.fixtures_live import LiveFixtureSource
+
+        league_ids = list(self.settings.pipeline.league_ids)
+        df = LiveFixtureSource().upcoming_matches(self.repo, league_ids, days_ahead=7)
+        self.repo.table("maclar")  # yansıtmayı transaction öncesi ısıt
+        with self.repo.engine.begin() as conn:
+            # Bayat 'NS' satırlarını temizle (her çalışmada taze fikstür)
+            conn.execute(text("DELETE FROM maclar WHERE durum='NS'"))
+            if not df.empty:
+                self.repo.upsert_dataframe(conn, df, "maclar", ["mac_id"])
+        if df.empty:
+            return "önümüzdeki 7 günde takip edilen liglerde maç bulunamadı"
+        return f"{len(df)} gelecek maç (TheSportsDB)"
 
     def _features(self) -> FeatureSet:
         fs = build_and_store_features(self.repo.engine, list(self.settings.pipeline.league_ids))
