@@ -96,6 +96,32 @@ class FootballRepository:
             {"ids": sorted(to_mark)},
         )
 
+    def save_predictions(self, predictions: pd.DataFrame) -> int:
+        """Tahminleri upsert eder (bildirim_gonderildi bayrağına dokunmaz)."""
+        cols = ["mac_id", "model_versiyonu", "olasilik_1", "olasilik_x", "olasilik_2", "tahmin", "guven"]
+        df = predictions[cols].copy()
+        for c in ("olasilik_1", "olasilik_x", "olasilik_2", "guven"):
+            df[c] = df[c].astype(float).round(4)
+        with self._engine.begin() as conn:
+            return self.upsert_dataframe(conn, df, "tahminler", ["mac_id"])
+
+    def get_match_labels(self, match_ids: Sequence[int]) -> pd.DataFrame:
+        """Tahmin çıktısı için takım/lig adları."""
+        sql = text("""
+            SELECT m.mac_id, m.tarih, l.ad AS lig, th.ad AS ev_sahibi, ta.ad AS deplasman
+            FROM maclar m
+            JOIN ligler l ON l.lig_id = m.lig_id
+            JOIN takimlar th ON th.takim_id = m.ev_sahibi_id
+            JOIN takimlar ta ON ta.takim_id = m.deplasman_id
+            WHERE m.mac_id IN :ids
+        """).bindparams(bindparam("ids", expanding=True))
+        with self._engine.connect() as conn:
+            return pd.read_sql(sql, conn, params={"ids": list(match_ids) or [-1]})
+
+    def load_feature_table(self, table_name: str = "mac_ozellikleri") -> pd.DataFrame:
+        with self._engine.connect() as conn:
+            return pd.read_sql(text(f'SELECT * FROM "{table_name}"'), conn)
+
     def save_sync_state(self, league_id: int, season: int, match_count: int, completed: bool) -> None:
         df = pd.DataFrame([{
             "lig_id": league_id, "sezon": season, "mac_sayisi": match_count,

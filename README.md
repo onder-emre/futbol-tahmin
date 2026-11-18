@@ -46,6 +46,22 @@ python -m scripts.run_pipeline --skip-stats                                     
 pytest -q                                                                       # testler
 ```
 
+## Günlük akış
+
+```bash
+python -m scripts.run_pipeline      # 1) yeni maçlar + istatistikler (artımlı)
+python -m scripts.build_features    # 2) form/H2H öznitelikleri → mac_ozellikleri tablosu
+python -m scripts.train_model       # 3) (haftalık yeterli) model eğit + zamana dayalı test raporu
+python -m scripts.predict --days 7  # 4) yaklaşan maçlar: "Galatasaray Kazanır %65, Beraberlik %20, ..."
+```
+
+### Model (FAZ 3)
+- Sınıflar: `1` ev sahibi, `X` beraberlik, `2` deplasman. Çıktı her zaman `predict_proba()` olasılıkları.
+- XGBoost ve Random Forest, eğitim dönemi içinde `TimeSeriesSplit` ile karşılaştırılır; log loss'u düşük olan seçilir.
+- Test = en yeni %15 maç (rastgele bölme yok, aynı gün iki tarafa bölünmez). Rapor: log loss, RPS, doğruluk ve baz çizgi.
+- Canlı model test sonrası tüm geçmişle yeniden eğitilir; `models/artifacts/latest.joblib`.
+- Tahminler `tahminler` tablosuna, gerçek sonuçla karşılaştırma `v_tahmin_performans` görünümüne düşer.
+
 ## Kota stratejisi (neden 10 yılı her seferinde çekmiyor?)
 
 | Adım | İstek maliyeti |

@@ -164,3 +164,38 @@ JOIN takimlar th ON th.takim_id = m.ev_sahibi_id
 JOIN takimlar ta ON ta.takim_id = m.deplasman_id
 LEFT JOIN istatistikler sh ON sh.mac_id = m.mac_id AND sh.takim_id = m.ev_sahibi_id
 LEFT JOIN istatistikler sa ON sa.mac_id = m.mac_id AND sa.takim_id = m.deplasman_id;
+
+-- ---------------------------------------------------------------------
+-- 6) TAHMİNLER (FAZ 3) — her maç için son model tahmini; FAZ 5 botu buradan okur
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tahminler (
+    mac_id               BIGINT       PRIMARY KEY REFERENCES maclar(mac_id) ON DELETE CASCADE,
+    model_versiyonu      VARCHAR(60)  NOT NULL,
+    olasilik_1           NUMERIC(5,4) NOT NULL CHECK (olasilik_1 BETWEEN 0 AND 1),   -- ev sahibi
+    olasilik_x           NUMERIC(5,4) NOT NULL CHECK (olasilik_x BETWEEN 0 AND 1),   -- beraberlik
+    olasilik_2           NUMERIC(5,4) NOT NULL CHECK (olasilik_2 BETWEEN 0 AND 1),   -- deplasman
+    tahmin               CHAR(1)      NOT NULL CHECK (tahmin IN ('1', 'X', '2')),
+    guven                NUMERIC(5,4) NOT NULL,
+    bildirim_gonderildi  BOOLEAN      NOT NULL DEFAULT FALSE,
+    olusturma_zamani     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    guncellenme_zamani   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE OR REPLACE TRIGGER trg_tahminler_guncellenme
+    BEFORE UPDATE ON tahminler FOR EACH ROW EXECUTE FUNCTION set_guncellenme_zamani();
+
+-- Tahmin + gerçek sonuç yan yana (model başarısını DBeaver'dan izlemek için)
+CREATE OR REPLACE VIEW v_tahmin_performans AS
+SELECT
+    t.mac_id, m.tarih, l.ad AS lig, th.ad AS ev_sahibi, ta.ad AS deplasman,
+    ROUND(t.olasilik_1 * 100) AS yuzde_1, ROUND(t.olasilik_x * 100) AS yuzde_x, ROUND(t.olasilik_2 * 100) AS yuzde_2,
+    t.tahmin,
+    CASE m.sonuc WHEN 'H' THEN '1' WHEN 'D' THEN 'X' WHEN 'A' THEN '2' END AS gercek,
+    CASE WHEN m.sonuc IS NULL THEN NULL
+         ELSE t.tahmin = CASE m.sonuc WHEN 'H' THEN '1' WHEN 'D' THEN 'X' WHEN 'A' THEN '2' END END AS dogru_mu,
+    t.model_versiyonu
+FROM tahminler t
+JOIN maclar   m  ON m.mac_id = t.mac_id
+JOIN ligler   l  ON l.lig_id = m.lig_id
+JOIN takimlar th ON th.takim_id = m.ev_sahibi_id
+JOIN takimlar ta ON ta.takim_id = m.deplasman_id;

@@ -65,6 +65,14 @@ class FeatureSet:
     feature_columns: list[str] = field(default_factory=list)
     target_column: str = "sonuc"
 
+    @classmethod
+    def from_frame(cls, frame: pd.DataFrame) -> "FeatureSet":
+        """Veritabanındaki `mac_ozellikleri` tablosundan FeatureSet oluşturur."""
+        frame = frame.copy()
+        frame["tarih"] = pd.to_datetime(frame["tarih"], utc=True)
+        features = [c for c in frame.columns if c not in META_COLUMNS + TARGET_COLUMNS]
+        return cls(frame=frame.sort_values(["tarih", "mac_id"]).reset_index(drop=True), feature_columns=features)
+
     @property
     def train(self) -> pd.DataFrame:
         """Sonucu belli (oynanmış) maçlar."""
