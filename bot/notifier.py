@@ -25,15 +25,17 @@ class TelegramNotifier:
         self.send([escape_markdown(text, version=2)])
 
     async def _send_all(self, messages: list[str]) -> None:
+        chat_ids = self._settings.chat_ids
         async with Bot(self._settings.token) as bot:
-            for text in messages:
-                await bot.send_message(
-                    chat_id=self._settings.chat_id,
-                    text=text,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    disable_web_page_preview=True,
-                )
-        logger.info("Telegram: %d mesaj gönderildi.", len(messages))
+            for chat_id in chat_ids:
+                for text in messages:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                        disable_web_page_preview=True,
+                    )
+        logger.info("Telegram: %d mesaj × %d sohbet gönderildi.", len(messages), len(chat_ids))
 
 
 def discover_chat_ids(token: str) -> list[tuple[int, str]]:

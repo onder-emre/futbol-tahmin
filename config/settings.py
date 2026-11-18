@@ -97,7 +97,12 @@ class PipelineSettings:
 @dataclass(frozen=True)
 class TelegramSettings:
     token: str
-    chat_id: str
+    chat_id: str   # tek id ya da virgülle ayrılmış birden fazla (kişisel + grup)
+
+    @property
+    def chat_ids(self) -> list[str]:
+        """Mesajın gönderileceği tüm sohbetler (virgülle ayrılmış değerleri böler)."""
+        return [c.strip() for c in str(self.chat_id).split(",") if c.strip()]
 
     @classmethod
     def from_env(cls) -> "TelegramSettings":
