@@ -169,7 +169,13 @@ class DailyJob:
     def _notify(self, preds: pd.DataFrame, artifact: ModelArtifact, today: pd.Timestamp, report: DailyReport) -> str:
         formatter = MessageFormatter(threshold=self.daily.confidence_threshold, timezone=self.daily.timezone)
         if preds.empty:
-            return "bugün maç yok, mesaj atılmadı"
+            messages = formatter.empty_bulletin(today, artifact.version)
+            if self.dry_run or self.notifier is None:
+                print("\n\n".join(messages))
+                return "dry-run: bugün maç yok → bülten boş mesajı ekrana yazıldı"
+            self.notifier.send(messages)
+            report.messages_sent = len(messages)
+            return "bugün maç yok → 'bülten boş' mesajı gönderildi"
         pending_ids = self.repo.get_unnotified_ids(preds["mac_id"].tolist())
         pending = preds[preds["mac_id"].isin(pending_ids)]
         if pending.empty:

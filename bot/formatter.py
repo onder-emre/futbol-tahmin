@@ -66,6 +66,16 @@ class MessageFormatter:
             blocks.extend(self._match_block(r) for _, r in grp.iterrows())
         return self._paginate(header, blocks, footer)
 
+    def empty_bulletin(self, day: pd.Timestamp, model_version: str, reason: str | None = None) -> list[str]:
+        """Takip edilen liglerde o gün hiç maç yoksa gönderilecek 'bülten boş' mesajı."""
+        header = self._header(day)
+        body = (f"📭 {bold('Bülten boş')}\n"
+                f"{esc(reason or 'Bugün takip edilen liglerde maç yok. Yarın tekrar bakacağım!')}")
+        footer = (f"{esc('━' * 22)}\n"
+                  f"🤖 Model: {esc(model_version)}\n"
+                  f"_{esc('İstatistiksel model çıktısıdır, kesinlik içermez.')}_")
+        return [f"{header}\n\n{body}\n\n{footer}"]
+
     # ------------------------------------------------------------ parts
     def _header(self, day: pd.Timestamp) -> str:
         return (f"⚽ {bold('Günün Güvenilir Tahminleri')}\n"
