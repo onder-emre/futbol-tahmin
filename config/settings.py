@@ -51,6 +51,16 @@ class DatabaseSettings:
     user: str
     password: str
 
+    @classmethod
+    def from_env(cls) -> "DatabaseSettings":
+        return cls(
+            host=os.getenv("DB_HOST", "localhost"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            name=os.getenv("DB_NAME", "futbol_tahmin"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", ""),
+        )
+
     @property
     def url(self) -> URL:
         return URL.create(
@@ -94,13 +104,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         season_now = current_season()
         return cls(
-            db=DatabaseSettings(
-                host=os.getenv("DB_HOST", "localhost"),
-                port=int(os.getenv("DB_PORT", "5432")),
-                name=os.getenv("DB_NAME", "futbol_tahmin"),
-                user=os.getenv("DB_USER", "postgres"),
-                password=_env("DB_PASSWORD"),
-            ),
+            db=DatabaseSettings.from_env(),
             api=ApiSettings(
                 key=_env("API_FOOTBALL_KEY"),
                 requests_per_minute=int(os.getenv("API_RATE_LIMIT_PER_MINUTE", "10")),
